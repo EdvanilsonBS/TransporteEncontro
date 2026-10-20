@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b1b3a">
+<title>Transporte · Encontro Nacional do Poder Judiciário</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="style.css">
+<link rel="apple-touch-icon" sizes="180x180" href="img/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="32x32" href="img/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="img/favicon-16x16.png">
+<link rel="manifest" href="img/site.webmanifest">
+</head>
+<body>
+<!-- ===== TELA DE CARREGAMENTO ===== -->
+<div id="splash" role="status" aria-label="Carregando">
+  <!-- >>> TROQUE A LOGO AQUI: coloque o arquivo da logo (ex.: src="logo.png") ou um data:image em src <<< -->
+  <img src="img/photo_2024-02-21_10-33-39-removebg-preview.png" width="150" height="150" alt="Logo">
+  <div class="sp-spin"></div>
+</div>
+<header class="nav" id="nav"><div class="nav-in">
+  <button class="nav-brand" id="navBtn" aria-expanded="false" aria-controls="navMenu" aria-label="Menu do transporte"><span class="ico">🚌</span><span>Transporte</span>
+    <svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></button>
+  <nav class="nav-menu" id="navMenu"><button id="tP" class="on">Passageiro</button><button id="tD">Motorista</button><button id="tA" hidden>Admin</button></nav>
+</div></header>
+<div class="hero"><div class="hero-in">
+  <h1>Encontro Nacional do <span class="hl">Poder Judiciário</span></h1>
+  <p>Acompanhe os ônibus em tempo real e chegue ao evento sem pressa.</p>
+  <div class="stats"><div><b id="stA">—</b><span>ônibus em operação</span></div><div><b id="stR">—</b><span>rotas</span></div></div>
+</div></div>
+<div class="wrap">
+  <div id="demo" class="demo" hidden>Modo demonstração: ônibus simulados. Preencha SB_URL e SB_KEY no script para usar dados reais. Aba Motorista: use qualquer nome e o PIN 1234.</div>
+  <div id="err" class="demo" hidden>Sem conexão. Tentando novamente…</div>
+  <section id="vP">
+  <div class="layout">
+    <div class="card"><div id="map"></div></div>
+    <div id="list" class="list"></div>
+  </div></section>
+<section id="vD" hidden>
+  <div class="drv">
+    <div id="login" class="card">
+      <b style="font-size:18px">Entrar como motorista</b>
+      <label for="drv" style="margin-top:14px">Motorista</label><select id="drv"></select>
+      <label for="pin" style="margin-top:14px">PIN</label><input id="pin" type="password" inputmode="numeric" maxlength="8" autocomplete="off">
+      <div class="err" id="lErr"></div>
+      <button class="btn" id="btnIn">Entrar</button>
+    </div>
+    <div id="panel" class="card" hidden>
+      <div class="row"><b id="hello" style="font-size:18px"></b><button class="btn ghost" id="btnOut">Sair</button></div>
+      <div id="resume" class="nxt" hidden><div><b>Percurso interrompido</b><br><span class="mut" id="resumeTxt"></span></div><button class="btn ghost" id="btnResume">Retomar</button></div>
+      <label for="rsel" style="margin-top:14px">Rota</label><select id="rsel"></select>
+      <button class="btn" id="btnGo">Iniciar percurso</button>
+      <button class="btn ghost" id="btnEco" style="width:100%;margin-top:10px" hidden>🌙 Modo economia (tela escura)</button>
+      <div class="mut" id="dst" style="margin-top:12px"></div>
+      <div id="nxt" class="nxt" hidden><div><span class="mut" id="nxtLbl">Próxima parada</span><br><b id="nxtName"></b> <span class="mut" id="nxtDist"></span></div></div>
+      <div class="err" id="dErr"></div><div class="mut" id="dInfo"></div>
+      <div class="err" id="wlWarn" hidden>Não consegui manter a tela ligada. Desative o bloqueio automático de tela; senão o envio para quando a tela apagar.</div>
+      <p class="mut">Deixe o celular no suporte, carregando, com esta tela aberta e a localização permitida.</p>
+    </div>
+  </div>
+</section>
+<section id="vA" hidden>
+  <div class="drv">
+    <div id="aLogin" class="card">
+      <b style="font-size:18px">Área do administrador</b>
+      <label for="aPass" style="margin-top:14px">Senha do admin</label><input id="aPass" type="password" autocomplete="off">
+      <div class="err" id="aErr"></div>
+      <button class="btn" id="aIn">Entrar</button>
+    </div>
+    <div id="aPanel" class="card" hidden>
+      <div class="row"><b style="font-size:18px">Motoristas</b><button class="btn ghost" id="aOut">Sair</button></div>
+      <label for="aNome" style="margin-top:14px">Nome do motorista</label><input id="aNome" autocomplete="off">
+      <label for="aPin" style="margin-top:14px">PIN (4 a 8 números)</label><input id="aPin" inputmode="numeric" maxlength="8" autocomplete="off">
+      <div class="err" id="aMsg"></div>
+      <button class="btn" id="aSave">Salvar motorista</button>
+      <p class="mut">Se o nome já existir, o PIN dele é trocado e o bloqueio por tentativas é limpo.</p>
+      <div id="aList"></div>
+    </div>
+  </div>
+</section>
+<!-- tela escura do motorista (modo economia) -->
+<div id="eco" class="eco" hidden><div><b>🚌 Transmitindo a posição</b><br><span id="ecoTxt"></span><br><span id="ecoSt"></span><br><small>Toque na tela para voltar</small></div></div>
+<div id="gpsWarn" class="block" hidden><div class="card">
+  <b style="font-size:18px">📍 GPS sem sinal</b>
+  <p>Ligue a localização do aparelho, vá para um local aberto e mantenha esta tela aberta. Os passageiros só veem o ônibus enquanto o GPS estiver enviando a posição.</p>
+  <button class="btn red" id="btnEnd">Finalizar percurso</button>
+</div></div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,595 @@
+/* Estilos do site de transporte. Cada bloco abaixo tem um título numerado (procure por "=====").
+   Obs.: algumas regras mais abaixo ajustam regras anteriores — se mudar algo e não surtir efeito, procure o mesmo seletor mais adiante. */
+
+/* ===== 1. CORES E TEMA (claro e escuro) — mude as cores aqui ===== */
+:root {
+  --bg: #f3f5f9;
+  --card: #fff;
+  --tx: #0f1a2e;
+  --mut: #5d6b82;
+  --bd: #e2e7ef;
+  --ac: #2563eb;
+  --ok: #15803d;
+  --warn: #b45309;
+  --off: #7b8798;
+  --sh: 0 8px 28px rgba(15, 26, 46, 0.08);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0a1020;
+    --card: #121a2d;
+    --tx: #eaf0fb;
+    --mut: #9aa8c0;
+    --bd: #223049;
+    --ac: #6ea0ff;
+    --ok: #4ade80;
+    --warn: #fbbf24;
+    --off: #8190a8;
+    --sh: 0 8px 28px rgba(0, 0, 0, 0.4);
+  }
+}
+* {
+  box-sizing: border-box;
+}
+/* ===== 2. BASE DA PÁGINA ===== */
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--tx);
+  font:
+    15px/1.5 Inter,
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    Roboto,
+    sans-serif;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+/* ===== 3. MENU DO TOPO (barra azul com Passageiro / Motorista) ===== */
+.nav {
+  background: #0b1b3a;
+  color: #fff;
+  padding-top: env(safe-area-inset-top);
+  position: sticky;
+  top: 0;
+  z-index: 1500;
+}
+.nav-in {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 0 16px;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 800;
+}
+.ico {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 10px;
+}
+/* ===== 4. TÍTULO E NÚMEROS DO TOPO (hero) ===== */
+.hero {
+  background:
+    radial-gradient(900px 320px at 88% -20%, #3b6cf0 0, transparent 60%),
+    linear-gradient(135deg, #0b1b3a, #13306b);
+  color: #fff;
+  padding: 24px 16px 70px;
+}
+.hero-in {
+  max-width: 1100px;
+  margin: 0 auto;
+}
+h1 {
+  font-size: clamp(28px, 6vw, 46px);
+  line-height: 1.08;
+  margin: 0 0 10px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  max-width: 17ch;
+}
+.hl {
+  background: linear-gradient(90deg, #8bb8ff, #a5f3fc);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.hero p {
+  margin: 0;
+  color: #cbd8f5;
+  max-width: 46ch;
+}
+.stats {
+  display: flex;
+  gap: 10px;
+  margin-top: 18px;
+}
+.stats div {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 14px;
+  padding: 8px 16px;
+  min-width: 120px;
+}
+.stats b {
+  display: block;
+  font-size: 24px;
+  line-height: 1.1;
+}
+.stats span {
+  font-size: 12px;
+  color: #cbd8f5;
+}
+/* ===== 5. ÁREA PRINCIPAL, CARTÕES E MAPA ===== */
+.wrap {
+  max-width: 1100px;
+  margin: -44px auto 0;
+  padding: 0 16px 32px;
+}
+.demo {
+  background: #fef3c7;
+  color: #92400e;
+  border-radius: 12px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+.layout {
+  display: grid;
+  gap: 16px;
+}
+.card {
+  background: var(--card);
+  border: 1px solid var(--bd);
+  border-radius: 18px;
+  padding: 16px;
+  box-shadow: var(--sh);
+}
+#map {
+  height: 380px;
+  border-radius: 14px;
+}
+.side {
+  display: grid;
+  gap: 14px;
+  align-content: start;
+}
+label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--mut);
+  margin-bottom: 6px;
+}
+select {
+  width: 100%;
+  padding: 13px;
+  border-radius: 12px;
+  border: 1px solid var(--bd);
+  background: var(--bg);
+  color: var(--tx);
+  font: inherit;
+  font-size: 16px;
+}
+.mut {
+  color: var(--mut);
+  font-size: 13px;
+}
+/* ===== 6. STATUS (Chegando / Perto / Longe) E MARCADORES NO MAPA — .sp = paradas, .pin = ônibus ===== */
+.s-chegando {
+  color: var(--ok);
+}
+.s-chegando::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  margin-right: 6px;
+  animation: p 1.2s infinite;
+}
+.s-perto {
+  color: var(--warn);
+}
+.s-longe,
+.s-passou {
+  color: var(--off);
+}
+@keyframes p {
+  50% {
+    opacity: 0.25;
+  }
+}
+.sp {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: #fff;
+  color: var(--c);
+  border: 3px solid var(--c);
+  font: 700 11px/20px system-ui;
+  text-align: center;
+  box-shadow: 0 1px 5px #0005;
+}
+.pin {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  color: #fff;
+  font: 700 12px/28px system-ui;
+  text-align: center;
+  border: 3px solid #fff;
+  box-shadow: 0 2px 8px #0007;
+}
+@media (min-width: 900px) {
+  .layout {
+    grid-template-columns: 1fr 390px;
+    align-items: start;
+  }
+  #map {
+    height: 600px;
+  }
+}
+/* ===== 7. MENU NO CELULAR, FORMULÁRIOS E BOTÕES (Motorista e Admin) ===== */
+[hidden] {
+  display: none !important;
+}
+.nav-in {
+  justify-content: space-between;
+  position: relative;
+}
+.nav-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: none;
+  border: 0;
+  color: #fff;
+  font: inherit;
+  font-weight: 800;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 6px 0;
+}
+.chev {
+  display: none;
+  transition: transform 0.2s;
+}
+.nav.open .chev {
+  transform: rotate(180deg);
+}
+.nav-menu {
+  display: flex;
+  gap: 6px;
+}
+.nav-menu button {
+  border: 0;
+  background: none;
+  color: #cbd8f5;
+  font: inherit;
+  font-weight: 700;
+  padding: 9px 18px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.nav-menu button:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+.nav-menu button.on {
+  background: #2563eb;
+  color: #fff;
+}
+@media (min-width: 720px) {
+  .nav-brand {
+    cursor: default;
+    pointer-events: none;
+  }
+}
+@media (max-width: 719px) {
+  .chev {
+    display: block;
+  }
+  .nav-menu {
+    display: none;
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 100%;
+    flex-direction: column;
+    gap: 2px;
+    background: #0b1b3a;
+    padding: 6px 12px 14px;
+    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.35);
+  }
+  .nav.open .nav-menu {
+    display: flex;
+  }
+  .nav-menu button {
+    text-align: left;
+    padding: 14px;
+    font-size: 16px;
+  }
+}
+.drv {
+  max-width: 460px;
+  margin: 0 auto;
+}
+input {
+  width: 100%;
+  padding: 13px;
+  border-radius: 12px;
+  border: 1px solid var(--bd);
+  background: var(--bg);
+  color: var(--tx);
+  font: inherit;
+  font-size: 16px;
+}
+.btn {
+  margin-top: 16px;
+  width: 100%;
+  border: 0;
+  background: var(--ac);
+  color: #fff;
+  padding: 14px;
+  border-radius: 12px;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+.btn:disabled {
+  opacity: 0.6;
+}
+.btn.red {
+  background: #dc2626;
+}
+.btn.ghost {
+  background: none;
+  color: var(--ac);
+  border: 1px solid var(--bd);
+  margin: 0;
+  width: auto;
+  padding: 9px 16px;
+}
+.err {
+  color: #dc2626;
+  font-size: 13px;
+  margin-top: 8px;
+  min-height: 18px;
+}
+.row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+}
+.nxt {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg);
+  border: 1px solid var(--bd);
+  border-radius: 12px;
+  padding: 12px;
+  margin-top: 12px;
+}
+.block {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  background: rgba(10, 16, 32, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.block .card {
+  max-width: 420px;
+}
+/* ===== 8. LISTA DE ROTAS E LINHA DO TEMPO DOS HOTÉIS ===== */
+.list {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+.rt {
+  border: 1px solid var(--bd);
+  border-radius: 14px;
+  padding: 14px;
+  cursor: pointer;
+  background: var(--card);
+  box-shadow: var(--sh);
+}
+.rt.sel {
+  outline: 2px solid var(--ac);
+}
+.top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+}
+.dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex: none;
+}
+.pill {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 99px;
+  border: 1px solid currentColor;
+  white-space: nowrap;
+}
+.pill.ok::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  margin-right: 6px;
+  animation: p 1.4s infinite;
+}
+.ok {
+  color: var(--ok);
+}
+.warn {
+  color: var(--warn);
+}
+.off {
+  color: var(--off);
+}
+.bus {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--bd);
+  border-radius: 10px;
+  font-size: 13px;
+}
+.tl {
+  margin-top: 12px;
+  display: grid;
+}
+.st {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 2px;
+  border-top: 1px solid var(--bd);
+  font-size: 14px;
+}
+.st:first-child {
+  border-top: 0;
+}
+.st .n {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  border: 2px solid var(--c);
+  color: var(--c);
+  flex: none;
+}
+.st.done .n {
+  background: var(--off);
+  border-color: var(--off);
+  color: #fff;
+}
+.st.done b {
+  color: var(--mut);
+  font-weight: 600;
+}
+.st .tx {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: right;
+}
+.sp.done {
+  background: var(--off);
+  border-color: var(--off);
+  color: #fff;
+}
+.sp.on {
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--c) 30%, transparent);
+  transform: scale(1.25);
+}
+.s-local {
+  color: var(--ok);
+}
+.s-local::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  margin-right: 6px;
+  animation: p 1.2s infinite;
+}
+/* ===== 9. TELA ESCURA DO MOTORISTA (modo economia) ===== */
+.eco {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  background: #000;
+  color: #6b7280;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 24px;
+  line-height: 1.7;
+}
+.eco b {
+  font-size: 20px;
+  color: #9ca3af;
+}
+/* ===== 10. TELA DE CARREGAMENTO (logo) ===== */
+#splash {
+  position: fixed;
+  inset: 0;
+  z-index: 5000;
+  background: linear-gradient(135deg, #0b1b3a, #13306b);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 26px;
+  transition: opacity 0.4s;
+  animation: sf 0.3s 12s forwards;
+}
+#splash.out {
+  opacity: 0;
+  pointer-events: none;
+}
+#splash img {
+  width: 150px;
+  height: auto;
+  display: block;
+  animation: pulse 1.8s ease-in-out infinite;
+}
+.sp-spin {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 3px solid rgba(255, 255, 255, 0.25);
+  border-top-color: #fff;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes pulse {
+  50% {
+    opacity: 0.7;
+    transform: scale(0.97);
+  }
+}
+@keyframes sf {
+  to {
+    opacity: 0;
+    visibility: hidden;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  #splash img,
+  .sp-spin {
+    animation: none;
+  }
+}
