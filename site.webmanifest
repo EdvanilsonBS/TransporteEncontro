@@ -1,0 +1,16 @@
+{
+  "name": "Transporte · Encontro Nacional do Poder Judiciário",
+  "short_name": "Transporte",
+  "description": "Acompanhe os ônibus em tempo real e chegue ao evento sem pressa.",
+  "start_url": "../index.html",
+  "scope": "../",
+  "display": "standalone",
+  "orientation": "portrait",
+  "lang": "pt-BR",
+  "background_color": "#0b1b3a",
+  "theme_color": "#0b1b3a",
+  "icons": [
+    { "src": "android-chrome-192x192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "android-chrome-512x512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
