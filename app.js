@@ -1,21 +1,4 @@
 /* =====================================================================
-   ÍNDICE DESTE ARQUIVO (use Ctrl+F e procure pelo título)
-   ---------------------------------------------------------------------
-   CONFIGURAÇÃO ........... Supabase, tempos, distâncias, paradas longas  (comece por aqui)
-   TELA DE CARREGAMENTO ... tempo da logo (a imagem fica no index.html)
-   dados .................. como as rotas e paradas são carregadas
-   simulação .............. ônibus de mentira do modo demonstração
-   mapa e lista de rotas .. mapa, rotas, paradas e cartões da direita
-   proximidade ............ cálculo de "Chegando / Perto / Longe / Já passou"
-   motorista .............. login, iniciar percurso, GPS e envio da posição
-   MODO ECONOMIA .......... tela escura do motorista
-   PARADAS AUTOMÁTICAS .... "No local" e "Já passou" sem o motorista apertar
-   ÁREA DO ADMIN .......... cadastro de motoristas (abrir com #admin)
-   abas ................... menu Passageiro / Motorista / Admin
-   início ................. o que roda quando a página abre
-   ===================================================================== */
-
-/* =====================================================================
    CONFIGURAÇÃO — o que você mais vai querer editar fica aqui em cima
    ===================================================================== */
 
@@ -33,6 +16,10 @@ const LIM_PERTO = 1000; // metros: abaixo disso aparece "Perto" (acima: "Longe")
 // --- Tela de carregamento (a logo fica no index.html, procure por "TROQUE A LOGO AQUI")
 const SPLASH_MIN = 2500; // tempo mínimo da logo na tela (ms)
 const SPLASH_MAX = 10000; // limite: some mesmo que os dados não cheguem (ms)
+
+// --- Aviso "Instalar o app?" (PWA)
+const INSTALAR_ATRASO = 3000;        // espera isso (ms) depois de abrir o site antes de perguntar
+const INSTALAR_VOLTAR_EM_DIAS = 7;   // se a pessoa tocar em "Agora não", só pergunta de novo depois desses dias
 
 // --- Motorista: detecção automática das paradas
 const SEND = 10000; // de quanto em quanto tempo envia a posição (ms)
@@ -302,7 +289,7 @@ function render() {
       const lines = bs
         .map(
           b =>
-            '<div class="bus"><div class="top" style="font-size:14px">🚌 <b>' +
+            '<div class="bus"><div class="top peq">🚌 <b>' +
             esc(b.motorista) +
             '</b>' +
             // "Sem sinal" aparece só no cartão do motorista que perdeu o sinal (não aparece nenhum tempo "há ... min")
@@ -353,7 +340,7 @@ function render() {
         '">' +
         st +
         '</span></div>' +
-        (lines || '<div class="mut" style="margin-top:6px">Aguardando um motorista iniciar o percurso</div>') +
+        (lines || '<div class="mut mt6">Aguardando um motorista iniciar o percurso</div>') +
         tl +
         '</div>'
       );
@@ -788,7 +775,7 @@ async function send(cur) {
 let adm = null; // token do admin: fica só na memória (fechou a aba, saiu)
 const amsg = (t, ok) => {
   $('aMsg').textContent = t;
-  $('aMsg').style.color = ok ? 'var(--ok)' : '';
+  $('aMsg').classList.toggle('ok-msg', !!ok); // a cor está no style.css (.err.ok-msg)
 };
 function aui() {
   $('aLogin').hidden = !!adm;
@@ -806,7 +793,7 @@ async function aList() {
     r
       .map(
         n =>
-          '<div class="row" style="padding:8px 0;border-top:1px solid var(--bd)"><span>' +
+          '<div class="row item"><span>' +
           esc(n) +
           '</span><button class="btn ghost" data-del="' +
           esc(n) +
@@ -907,6 +894,34 @@ const chkAdm = () => {
 }; // a aba Admin só aparece com #admin
 addEventListener('hashchange', chkAdm);
 chkAdm();
+
+/* ===== INSTALAR O APP (PWA) =====
+   Android (Chrome/Edge): mostra o aviso e, ao tocar em "Instalar", abre a janela oficial de instalação.
+   iPhone (Safari): não existe janela automática; o aviso explica "Compartilhar > Adicionar à Tela de Início".
+   Não aparece se o app já estiver instalado, nem durante um percurso do motorista. */
+if ('serviceWorker' in navigator) addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+const jaInstalado = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const ehIphone = /iphone|ipad|ipod/i.test(navigator.userAgent) && !/crios|fxios|edgios/i.test(navigator.userAgent);
+let instEvt = null;
+const instAdiado = () => { try { return Date.now() < Number(localStorage.getItem('bl_inst')); } catch (e) { return false; } };
+function instFechar(lembrar) {
+  $('instalar').hidden = true;
+  if (lembrar) try { localStorage.setItem('bl_inst', Date.now() + INSTALAR_VOLTAR_EM_DIAS * 86400000); } catch (e) {}
+}
+function instMostrar(iphone) {
+  if (jaInstalado() || instAdiado()) return;
+  setTimeout(() => {
+    if (run || jaInstalado()) return;
+    $('instMsg').textContent = iphone ? 'No iPhone: toque em Compartilhar e depois em “Adicionar à Tela de Início”.' : 'Abra mais rápido, direto da tela inicial do celular.';
+    $('instSim').hidden = iphone; $('instNao').textContent = iphone ? 'Entendi' : 'Agora não';
+    $('instalar').hidden = false;
+  }, INSTALAR_ATRASO);
+}
+addEventListener('beforeinstallprompt', e => { e.preventDefault(); instEvt = e; instMostrar(false); });
+addEventListener('appinstalled', () => instFechar(false));
+$('instSim').onclick = async () => { if (!instEvt) return; instEvt.prompt(); await instEvt.userChoice; instEvt = null; instFechar(false); };
+$('instNao').onclick = () => instFechar(true);
+if (ehIphone) instMostrar(true);
 
 /* ---------- início ---------- */
 (async function () {
