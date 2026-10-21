@@ -1,7 +1,3 @@
-/* =====================================================================
-   CONFIGURAÇÃO — o que você mais vai querer editar fica aqui em cima
-   ===================================================================== */
-
 // --- Supabase (Settings > API no painel do Supabase). Deixe SB_URL vazio para ver o modo demonstração.
 const SB_URL = 'https://bgffdyrpavhmbsvpyitn.supabase.co';
 const SB_KEY = 'sb_publishable_UjZa7ykJtFkpmXsyirHrgw_pHlNVszx'; // chave pública: pode ficar no site
@@ -111,6 +107,7 @@ const sb = async (p, o = {}) => {
   }
 };
 async function load() {
+  stopsBy = {}; // zera antes de carregar: se tentar de novo, as paradas não duplicam
   if (DEMO) {
     routes = D_ROUTES;
     routes.forEach(r => (stopsBy[r.id] = D_STOPS[r.id].map(p => ({ nome: p[0], lat: p[1], lng: p[2] }))));
@@ -157,9 +154,9 @@ function step() {
 async function poll() {
   if (document.hidden) return;
   try {
-    const d = await (await fetch(SB_URL + '/rest/v1/rpc/buses', { method: 'POST', headers: H, body: '{}' })).json();
-    buses = d.buses.map(b => ({ ...b, rota: String(b.rota), lat: +b.lat, lng: +b.lng, ts: +b.ts }));
-    offset = d.now - Date.now();
+    const d = await rpc('buses'); // confere o status HTTP e tem limite de tempo (10 s)
+    buses = (d.buses || []).map(b => ({ ...b, rota: String(b.rota), lat: +b.lat, lng: +b.lng, ts: +b.ts }));
+    if (d.now) offset = Number(d.now) - Date.now(); // sem "now" o relógio viraria NaN e todos os ônibus ficariam "fora de operação"
     $('err').hidden = true;
   } catch (e) {
     $('err').hidden = false;
@@ -176,63 +173,94 @@ const R = {},
   mk = {};
 let selRoute = '1',
   lastList = '';
-const stopIcon = (r, i, st) =>
+/* ÍCONES DO MAPA
+   - Parada: placa grande com o número da parada na cor da rota (com nenhuma rota selecionada, vira um pontinho colorido).
+   - Ônibus: círculo grande com o desenho de um ônibus na cor da rota, número da rota no canto, nome do motorista embaixo
+     e um brilho pulsante (para o ônibus se destacar no mapa). */
+const BUS_SVG =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<path d="M8 6v6"/><path d="M15 6v6"/><path d="M2 12h19.6"/>' +
+  '<path d="M18 18h3s.5-1.7.8-2.8c.1-.4.2-.8.2-1.2 0-.4-.1-.8-.2-1.2l-1.4-5C20.1 6.8 19.1 6 18 6H4a2 2 0 0 0-2 2v10h3"/>' +
+  '<circle cx="7" cy="18" r="2"/><path d="M9 18h5"/><circle cx="16" cy="18" r="2"/></svg>';
+const firstName = n => String(n || '').trim().split(/\s+/)[0];
+const stopIcon = (r, i, st, mini) =>
+  L.divIcon({
+    className: '',
+    html: mini
+      ? '<div class="sp mini" style="--c:' + esc(r.cor) + '"></div>'
+      : '<div class="sp' +
+        (st === 'passou' ? ' done' : st === 'chegando' || st === 'local' ? ' on' : '') +
+        '" style="--c:' +
+        esc(r.cor) +
+        '">' +
+        (st === 'passou' ? '✓' : BUS_SVG) + // placa de ponto de ônibus (sem número; a ordem das paradas está na lista ao lado)
+        '</div>',
+    iconSize: mini ? [14, 14] : [36, 50],
+    iconAnchor: mini ? [7, 7] : [18, 49], // o pé da placa fica exatamente sobre a parada
+  });
+const pinIcon = (r, b, warn) =>
   L.divIcon({
     className: '',
     html:
-      '<div class="sp' +
-      (st === 'passou' ? ' done' : st === 'chegando' || st === 'local' ? ' on' : '') +
-      '" style="--c:' +
-      esc(r.cor) +
-      '">' +
-      (st === 'passou' ? '✓' : i + 1) +
-      '</div>',
-    iconSize: [26, 26],
-    iconAnchor: [13, 13],
-  });
-const pinIcon = r =>
-  L.divIcon({
-    className: '',
-    html: '<div class="pin" style="background:' + esc(r.cor) + '">' + esc(r.id) + '</div>',
-    iconSize: [34, 34],
-    iconAnchor: [17, 17],
+      '<div class="bus-mk' + (warn ? ' sem' : '') + '" style="--c:' + esc(r.cor) + '"><span class="halo"></span>' +
+      '<div class="bus-body">' + BUS_SVG + '</div><span class="bus-rt">' + esc(r.id) + '</span>' +
+      '<span class="bus-nm">' + esc(firstName(b.motorista)) + '</span></div>',
+    iconSize: [48, 48],
+    iconAnchor: [24, 24],
   });
 
+/* Só as paradas ficam no mapa (sem a linha entre elas). Com uma rota selecionada aparecem as paradas dela;
+   sem seleção, as paradas de todas as rotas aparecem como pontinhos. Com bastante zoom, o nome aparece ao lado. */
 function build() {
   routes.forEach(r => {
     const s = stopsBy[r.id] || [];
     if (s.length < 2) return;
-    const line = L.polyline(
-      s.map(p => [p.lat, p.lng]),
-      { color: r.cor, weight: 4, opacity: 0.55 },
-    ).addTo(map);
     const dots = s.map((p, i) => {
-      const m = L.marker([p.lat, p.lng], { icon: stopIcon(r, i, 'sem') }).bindTooltip(esc(i + 1 + '. ' + p.nome));
+      const m = L.marker([p.lat, p.lng], { icon: stopIcon(r, i, 'sem', false), zIndexOffset: 200 });
       m._k = 'sem';
       return m;
     });
-    R[r.id] = { line, dots, r };
+    R[r.id] = { dots, r };
   });
   paint();
+  stopLabels();
   focusRoute();
 }
 function paint() {
   Object.entries(R).forEach(([id, o]) => {
-    const on = selRoute === id,
-      dim = selRoute && !on;
-    o.line.setStyle({ weight: on ? 7 : 4, opacity: dim ? 0.15 : on ? 0.95 : 0.55 });
-    if (on) o.line.bringToFront();
-    o.dots.forEach(d => (on ? d.addTo(map) : map.removeLayer(d)));
+    const show = !selRoute || selRoute === id;
+    o.dots.forEach(d => (show ? d.addTo(map) : map.removeLayer(d)));
   });
 }
+function stopLabels() {
+  const on = map.getZoom() >= 15; // zoom de rua: mostra o nome de cada parada ao lado do ícone
+  Object.values(R).forEach(o =>
+    o.dots.forEach((d, i) => {
+      if (d._lab === on) return;
+      d._lab = on;
+      d.unbindTooltip();
+      d.bindTooltip(esc(stopsBy[o.r.id][i].nome), on ? { permanent: true, direction: 'right', offset: [18, -20], className: 'stop-tip' } : { direction: 'top', offset: [0, -42] });
+    }),
+  );
+}
+map.on('zoomend', stopLabels);
 function focusRoute() {
-  const ls = selRoute && R[selRoute] ? [R[selRoute].line] : Object.values(R).map(o => o.line);
-  if (ls.length) map.fitBounds(L.featureGroup(ls).getBounds().pad(0.15));
+  const ids = selRoute && R[selRoute] ? [selRoute] : Object.keys(R),
+    pts = [];
+  ids.forEach(id => (stopsBy[id] || []).forEach(p => pts.push([p.lat, p.lng])));
+  if (pts.length) map.fitBounds(L.latLngBounds(pts).pad(0.15));
+}
+function pick(id) { // seleciona uma rota (toque no cartão ou no ônibus)
+  selRoute = id;
+  paint();
+  lastList = '';
+  render();
+  focusRoute();
 }
 
 /* ---------- proximidade ---------- */
 function info(b, s, idx) {
-  const p = Number(b.proxima);
+  const p = b.proxima == null || b.proxima === '' ? NaN : Number(b.proxima); // Number(null) daria 0
   if (p > idx) return { st: 'passou', m: 0, min: 0 }; // o ônibus já passou por esta parada
   if (b.estado === 'local' && p === idx) return { st: 'local', m: 0, min: 0 }; // motorista parado nesta parada
   const k = isNaN(p) ? idx : p;
@@ -263,11 +291,6 @@ function state(b) {
   const age = Date.now() + offset - Number(b.ts);
   return age < STALE ? 'ok' : age < 600000 ? 'warn' : 'off';
 }
-function nextTxt(r, b) {
-  const s = stopsBy[r.id],
-    p = s && b.proxima != null && b.proxima !== '' ? s[Number(b.proxima)] : null;
-  return p ? '<br>' + (b.estado === 'local' ? 'No local: ' : 'Próxima parada: ') + '<b>' + esc(p.nome) + '</b>' : '';
-}
 
 function render() {
   const live = {},
@@ -289,14 +312,19 @@ function render() {
       const lines = bs
         .map(
           b =>
-            '<div class="bus"><div class="top peq">🚌 <b>' +
+            '<div class="bus" style="--c:' +
+            esc(r.cor) +
+            '"><div class="top peq"><span class="bico">' +
+            BUS_SVG +
+            '</span><b>' +
             esc(b.motorista) +
             '</b>' +
-            // "Sem sinal" aparece só no cartão do motorista que perdeu o sinal (não aparece nenhum tempo "há ... min")
+            '<span class="mut">· Rota ' +
+            esc(r.id) +
+            '</span>' +
+            // "Sem sinal" aparece só no cartão do motorista que perdeu o sinal
             (state(b) === 'warn' ? '<span class="pill warn">Sem sinal</span>' : '') +
-            '</div>' +
-            nextTxt(r, b) +
-            '</div>',
+            '</div></div>',
         )
         .join('');
       const tl =
@@ -311,7 +339,7 @@ function render() {
                   '<div class="st' +
                   (x.st === 'passou' ? ' done' : '') +
                   '"><span class="n">' +
-                  (x.st === 'passou' ? '✓' : i + 1) +
+                  (x.st === 'passou' ? '✓' : '') +
                   '</span><b>' +
                   esc(p.nome) +
                   '</b><span class="tx s-' +
@@ -355,10 +383,12 @@ function render() {
 
   Object.entries(R).forEach(([id, o]) =>
     o.dots.forEach((d, i) => {
-      const st = SS[id][i].st;
-      if (d._k !== st) {
-        d.setIcon(stopIcon(o.r, i, st));
-        d._k = st;
+      const st = SS[id][i].st,
+        mini = !selRoute,
+        key = st + (mini ? 'm' : '');
+      if (d._k !== key) {
+        d.setIcon(stopIcon(o.r, i, st, mini));
+        d._k = key;
       }
     }),
   );
@@ -374,11 +404,24 @@ function render() {
       map.removeLayer(mk[id]);
       delete mk[id];
     }
+    const warn = st === 'warn';
     if (!mk[id]) {
-      mk[id] = L.marker(ll, { icon: pinIcon(r), zIndexOffset: 500 }).addTo(map);
+      mk[id] = L.marker(ll, { icon: pinIcon(r, b, warn), zIndexOffset: 1000 }) // acima das paradas
+        .bindTooltip(esc(b.motorista) + ' · rota ' + esc(r.id), { direction: 'top', offset: [0, -26] })
+        .addTo(map);
       mk[id]._r = r.id;
-    } else mk[id].setLatLng(ll);
-    mk[id].setOpacity(st === 'warn' ? 0.5 : selRoute && selRoute !== r.id ? 0.4 : 1);
+      mk[id]._w = warn;
+      mk[id].on('click', () => {
+        if (selRoute !== r.id) pick(r.id);
+      });
+    } else {
+      mk[id].setLatLng(ll);
+      if (mk[id]._w !== warn) {
+        mk[id].setIcon(pinIcon(r, b, warn));
+        mk[id]._w = warn;
+      }
+    }
+    mk[id].setOpacity(warn ? 0.5 : selRoute && selRoute !== r.id ? 0.4 : 1);
   });
   Object.keys(mk).forEach(k => {
     if (!seen.has(k)) {
@@ -416,6 +459,10 @@ const rpc = async (fn, b) =>
         admin_motoristas: ['João Silva', 'Maria Souza'],
         admin_salvar: { ok: true },
         admin_excluir: { ok: true },
+        admin_lista: [{ nome: 'João Silva', pin: '1234' }, { nome: 'Maria Souza', pin: null }],
+        admin_salvar_pin: { ok: true },
+        admin_finalizar: { ok: true },
+        finalizado_em: 0,
       }[fn]
     : sb('rpc/' + fn, { method: 'POST', body: JSON.stringify(b || {}) });
 const rname = id => {
@@ -471,7 +518,8 @@ function dui() {
 }
 async function loadDrivers() {
   try {
-    $('drv').innerHTML = (await rpc('lista_motoristas')).map(n => '<option>' + esc(n) + '</option>').join('');
+    const nomes = (await rpc('lista_motoristas')).slice().sort((a, b) => String(a).localeCompare(String(b), 'pt', { sensitivity: 'base' })); // ordem alfabética
+    $('drv').innerHTML = nomes.map(n => '<option>' + esc(n) + '</option>').join('');
   } catch (e) {}
 }
 async function initDriver() {
@@ -619,6 +667,8 @@ async function startRun(rota, prox0) {
     since: null,
     fixAt: Date.now(),
     lastOk: Date.now(),
+    ini: Date.now() + offset, // hora (do servidor) em que este percurso começou
+    chk: 0,
   });
   cur.watch = navigator.geolocation.watchPosition(
     p => {
@@ -693,6 +743,12 @@ function advance(cur) {
   send(cur);
   nextUI(cur);
 }
+// Já está mais perto da parada seguinte do que desta? Serve para paradas coladas (Luzeiros → Oásis → Praiano ficam a ~115 m
+// uma da outra, menos que RAIO_SAIDA): sem isto o app só percebia que o ônibus saiu depois de passar da parada seguinte.
+function pertoDaProxima(cur, s, d) {
+  const nx = s[cur.prox + 1];
+  return !!nx && dist(cur.last.lat, cur.last.lng, nx.lat, nx.lng) < d;
+}
 function stopLogic(cur) {
   const s = stopsBy[cur.rota] || [],
     p = s[cur.prox];
@@ -708,7 +764,7 @@ function stopLogic(cur) {
       send(cur);
     }
     if (t >= T_LOCAL + (lg ? T_SAIU_LONGA : T_SAIU)) return advance(cur);
-  } else if (cur.since && d > (lg ? RAIO_SAIDA_LONGA : RAIO_SAIDA)) {
+  } else if (cur.since && (d > (lg ? RAIO_SAIDA_LONGA : RAIO_SAIDA) || pertoDaProxima(cur, s, d))) {
     return advance(cur); // chegou ao ponto e já saiu
   } else if (!cur.since) {
     // passou direto por uma parada à frente (até 2 à frente)
@@ -732,13 +788,28 @@ function nextUI(cur) {
     ? Math.max(1, Math.ceil((T_LOCAL + (longa(p) ? T_SAIU_LONGA : T_SAIU) - (Date.now() - cur.since)) / 60000))
     : 0;
   $('nxtLbl').textContent = local ? 'No local' : 'Próxima parada';
-  $('nxtName').textContent = cur.prox + 1 + '. ' + p.nome;
+  $('nxtName').textContent = p.nome;
   $('nxtDist').textContent = local
     ? '· segue em até ' + falta + ' min'
     : cur.last
       ? '· a ' + fmt(dist(cur.last.lat, cur.last.lng, p.lat, p.lng))
       : '';
   $('ecoTxt').textContent = 'Rota ' + rname(cur.rota) + ' · ' + (local ? 'no local: ' : 'próxima: ') + p.nome;
+}
+// A cada envio (10 s) confere se o administrador finalizou este percurso (função "finalizado_em", veja admin_extras.sql).
+// Se sim, o app para de enviar a posição, senão o ônibus voltaria ao mapa na próxima leitura.
+async function verificaFim(cur) {
+  if (cur.noChk || Date.now() - cur.chk < 9000) return;
+  cur.chk = Date.now();
+  try {
+    const t = Number(await rpc('finalizado_em', { p_nome: sess.nome }));
+    if (t && t > cur.ini && run === cur) {
+      stop('O administrador finalizou o seu percurso. Toque em “Iniciar percurso” se ainda estiver rodando.');
+      clearSaved(); // sem botão "Retomar"
+    }
+  } catch (e) {
+    if (String(e.message) === '404') cur.noChk = true; // função não instalada: não tenta de novo
+  }
 }
 async function send(cur) {
   if (run !== cur || !cur.last || cur.busy || Date.now() - cur.fixAt > 15000) return;
@@ -764,6 +835,7 @@ async function send(cur) {
     else {
       cur.lastOk = Date.now();
       $('dErr').textContent = '';
+      verificaFim(cur);
     }
   } catch (e) {
     $('dErr').textContent = 'Falha ao enviar a posição; tentando de novo.';
@@ -781,24 +853,62 @@ function aui() {
   $('aLogin').hidden = !!adm;
   $('aPanel').hidden = !adm;
 }
+const onlineDe = n => {
+  const b = buses.find(x => String(x.motorista) === n && state(x) !== 'off');
+  return b ? { b, warn: state(b) === 'warn' } : null;
+};
 async function aList() {
-  const r = await rpc('admin_motoristas', { p_token: adm });
+  if (!DEMO) await poll(); // atualiza quem está online agora
+  let r = null;
+  try {
+    r = await rpc('admin_lista', { p_token: adm }); // nomes + PIN (função nova: veja admin_extras.sql)
+  } catch (e) {}
   if (r && r.error) {
     adm = null;
     aui();
     $('aErr').textContent = 'Sessão expirada. Entre novamente.';
     return;
   }
+  const completo = Array.isArray(r);
+  if (!completo) {
+    // função nova ainda não instalada no banco: mostra só os nomes
+    r = await rpc('admin_motoristas', { p_token: adm });
+    if (r && r.error) {
+      adm = null;
+      aui();
+      $('aErr').textContent = 'Sessão expirada. Entre novamente.';
+      return;
+    }
+    r = r.map(n => ({ nome: n, pin: null }));
+  }
+  $('aHint').textContent = completo ? 'Os PINs só aparecem para motoristas cujo PIN foi salvo por esta tela; para os antigos, salve o PIN de novo.' : 'Para ver os PINs e finalizar percursos, rode o arquivo admin_extras.sql no Supabase.';
+  r.sort((x, y) => String(x.nome).localeCompare(String(y.nome), 'pt', { sensitivity: 'base' }));
   $('aList').innerHTML =
     r
-      .map(
-        n =>
-          '<div class="row item"><span>' +
-          esc(n) +
-          '</span><button class="btn ghost" data-del="' +
-          esc(n) +
-          '">Excluir</button></div>',
-      )
+      .map(d => {
+        const on = onlineDe(String(d.nome));
+        return (
+          '<div class="adm-item"><div class="row"><b>' +
+          esc(d.nome) +
+          '</b>' +
+          (on
+            ? '<span class="pill ' + (on.warn ? 'warn' : 'ok') + '">' + (on.warn ? 'Sem sinal' : 'Online') + ' · rota ' + esc(on.b.rota) + '</span>'
+            : '<span class="mut">Offline</span>') +
+          '</div><div class="row mt6"><span class="mut">PIN: <code class="pinv" data-pin="' +
+          esc(d.pin || '') +
+          '">' +
+          (d.pin ? '••••' : '—') +
+          '</code></span>' +
+          (d.pin ? '<button class="btn ghost sm" data-eye="1">👁 Ver</button>' : '') +
+          '</div><div class="acts"><button class="btn ghost sm" data-edit="' +
+          esc(d.nome) +
+          '">Editar PIN</button>' +
+          (on ? '<button class="btn ghost sm" data-fim="' + esc(d.nome) + '">Finalizar percurso</button>' : '') +
+          '<button class="btn ghost sm" data-del="' +
+          esc(d.nome) +
+          '">Excluir</button></div></div>'
+        );
+      })
       .join('') || '<p class="mut">Nenhum motorista cadastrado.</p>';
 }
 $('aIn').onclick = async () => {
@@ -828,7 +938,12 @@ $('aSave').onclick = async () => {
   if (!nome) return amsg('Digite o nome do motorista.');
   if (!/^[0-9]{4,8}$/.test(pin)) return amsg('O PIN deve ter de 4 a 8 números.');
   try {
-    const r = await rpc('admin_salvar', { p_token: adm, p_nome: nome, p_pin: pin });
+    let r;
+    try {
+      r = await rpc('admin_salvar_pin', { p_token: adm, p_nome: nome, p_pin: pin }); // salva e guarda o PIN para o admin poder ver
+    } catch (e) {
+      r = await rpc('admin_salvar', { p_token: adm, p_nome: nome, p_pin: pin }); // função nova não instalada: salva sem guardar o PIN para visualização
+    }
     if (r.error === 'token') {
       adm = null;
       aui();
@@ -845,7 +960,48 @@ $('aSave').onclick = async () => {
   }
 };
 $('aList').addEventListener('click', async e => {
-  const n = e.target.dataset.del;
+  const t = e.target.closest('button');
+  if (!t) return;
+  if (t.dataset.eye) {
+    // mostra/oculta o PIN
+    const c = t.parentNode.querySelector('.pinv'),
+      vis = c.dataset.vis === '1';
+    c.textContent = vis ? '••••' : c.dataset.pin;
+    c.dataset.vis = vis ? '0' : '1';
+    t.textContent = vis ? '👁 Ver' : '🙈 Ocultar';
+    return;
+  }
+  if (t.dataset.edit) {
+    // leva o nome para o formulário: é só digitar o novo PIN e salvar
+    $('aNome').value = t.dataset.edit;
+    $('aPin').value = '';
+    amsg('Digite o novo PIN de ' + t.dataset.edit + ' e toque em Salvar.', true);
+    $('aPin').scrollIntoView({ block: 'center', behavior: 'smooth' });
+    $('aPin').focus();
+    return;
+  }
+  if (t.dataset.fim) {
+    // finaliza o percurso de um motorista que esqueceu de finalizar
+    const n = t.dataset.fim;
+    if (!confirm('Finalizar o percurso de ' + n + '? O ônibus some do mapa dos passageiros.')) return;
+    try {
+      const r = await rpc('admin_finalizar', { p_token: adm, p_nome: n });
+      if (r.error === 'token') {
+        adm = null;
+        aui();
+        return;
+      }
+      if (r.error) return amsg('Erro: ' + r.error);
+      if (!DEMO) await poll();
+      render();
+      amsg('Percurso de ' + n + ' finalizado.', true);
+      await aList();
+    } catch (err) {
+      amsg('Não foi possível finalizar. Rode o arquivo admin_extras.sql no Supabase.');
+    }
+    return;
+  }
+  const n = t.dataset.del;
   if (!n || !confirm('Excluir o motorista ' + n + '?')) return;
   try {
     await rpc('admin_excluir', { p_token: adm, p_nome: n });
@@ -896,41 +1052,70 @@ addEventListener('hashchange', chkAdm);
 chkAdm();
 
 /* ===== INSTALAR O APP (PWA) =====
-   Android (Chrome/Edge): mostra o aviso e, ao tocar em "Instalar", abre a janela oficial de instalação.
+   Computador (Chrome/Edge): aviso + botão "Instalar app" no menu. O app abre em janela própria e aparece na
+     barra de tarefas (botão direito no ícone > "Fixar na barra de tarefas" para deixá-lo sempre lá).
+   Android (Chrome/Edge): aviso + botão "Adicionar à tela inicial" no menu (abre a janela oficial de instalação).
    iPhone (Safari): não existe janela automática; o aviso explica "Compartilhar > Adicionar à Tela de Início".
-   Não aparece se o app já estiver instalado, nem durante um percurso do motorista. */
+   Não aparece se o app já estiver instalado, nem durante um percurso do motorista.
+   Firefox no computador não instala sites como app (o navegador não oferece). */
 if ('serviceWorker' in navigator) addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
 const jaInstalado = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 const ehIphone = /iphone|ipad|ipod/i.test(navigator.userAgent) && !/crios|fxios|edgios/i.test(navigator.userAgent);
+const ehCelular = matchMedia('(pointer: coarse)').matches || /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent);
 let instEvt = null;
 const instAdiado = () => { try { return Date.now() < Number(localStorage.getItem('bl_inst')); } catch (e) { return false; } };
 function instFechar(lembrar) {
   $('instalar').hidden = true;
   if (lembrar) try { localStorage.setItem('bl_inst', Date.now() + INSTALAR_VOLTAR_EM_DIAS * 86400000); } catch (e) {}
 }
-function instMostrar(iphone) {
-  if (jaInstalado() || instAdiado()) return;
+function instBtn() { // botão fixo no menu (continua disponível depois de tocar em "Agora não")
+  $('tI').hidden = jaInstalado() || !(instEvt || ehIphone);
+  $('tI').textContent = ehCelular ? '📲 Adicionar à tela inicial' : '⬇ Instalar app';
+}
+function instMostrar(iphone, forcar) {
+  if (jaInstalado() || (!forcar && instAdiado())) return;
   setTimeout(() => {
     if (run || jaInstalado()) return;
-    $('instMsg').textContent = iphone ? 'No iPhone: toque em Compartilhar e depois em “Adicionar à Tela de Início”.' : 'Abra mais rápido, direto da tela inicial do celular.';
-    $('instSim').hidden = iphone; $('instNao').textContent = iphone ? 'Entendi' : 'Agora não';
+    $('instTit').textContent = iphone || ehCelular ? 'Adicionar à tela inicial?' : 'Instalar o app Transporte?';
+    $('instMsg').textContent = iphone
+      ? 'No iPhone: toque em Compartilhar e depois em “Adicionar à Tela de Início”.'
+      : ehCelular
+        ? 'Abra o mapa com um toque, direto da tela inicial, como um app.'
+        : 'Abre em janela própria e aparece na barra de tarefas. Depois de instalar, clique com o botão direito no ícone e escolha “Fixar na barra de tarefas”.';
+    $('instSim').textContent = ehCelular ? 'Adicionar' : 'Instalar';
+    $('instSim').hidden = iphone;
+    $('instNao').textContent = iphone ? 'Entendi' : 'Agora não';
     $('instalar').hidden = false;
-  }, INSTALAR_ATRASO);
+  }, forcar ? 0 : INSTALAR_ATRASO);
 }
-addEventListener('beforeinstallprompt', e => { e.preventDefault(); instEvt = e; instMostrar(false); });
-addEventListener('appinstalled', () => instFechar(false));
-$('instSim').onclick = async () => { if (!instEvt) return; instEvt.prompt(); await instEvt.userChoice; instEvt = null; instFechar(false); };
+async function instalarAgora() {
+  if (!instEvt) return;
+  instEvt.prompt();
+  await instEvt.userChoice;
+  instEvt = null;
+  instFechar(false);
+  instBtn();
+}
+addEventListener('beforeinstallprompt', e => { e.preventDefault(); instEvt = e; instBtn(); instMostrar(false); });
+addEventListener('appinstalled', () => { instFechar(false); instBtn(); });
+$('instSim').onclick = instalarAgora;
 $('instNao').onclick = () => instFechar(true);
-if (ehIphone) instMostrar(true);
+$('tI').onclick = () => { navClose(); if (instEvt) instalarAgora(); else instMostrar(true, true); };
+if (ehIphone) { instBtn(); instMostrar(true); }
 
 /* ---------- início ---------- */
 (async function () {
-  try {
-    await load();
-  } catch (e) {
-    $('err').hidden = false;
-    hideSplash();
-    return;
+  // tenta carregar rotas e paradas até conseguir (antes, uma falha de rede deixava o site parado em "Tentando novamente…")
+  for (;;) {
+    try {
+      await load();
+      $('err').hidden = true;
+      break;
+    } catch (e) {
+      $('err').hidden = false;
+      hideSplash();
+      await new Promise(r => setTimeout(r, 5000));
+    }
   }
   build();
   initDriver();
