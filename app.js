@@ -110,12 +110,14 @@ async function load() {
   stopsBy = {}; // zera antes de carregar: se tentar de novo, as paradas não duplicam
   if (DEMO) {
     routes = D_ROUTES;
-    routes.forEach(r => (stopsBy[r.id] = D_STOPS[r.id].map(p => ({ nome: p[0], lat: p[1], lng: p[2] }))));
+    routes.forEach(r => (stopsBy[r.id] = D_STOPS[r.id].map((p, i) => ({ nome: p[0], lat: p[1], lng: p[2], ordem: i + 1 }))));
     return;
   }
-  routes = (await sb('rotas?select=*')).map(r => ({ ...r, id: String(r.id) }));
+  routes = (await sb('rotas?select=*'))
+    .map(r => ({ ...r, id: String(r.id) }))
+    .sort((a, b) => a.id.localeCompare(b.id, 'pt', { numeric: true }));
   (await sb('paradas?select=*&order=rota,ordem')).forEach(p =>
-    (stopsBy[String(p.rota)] = stopsBy[String(p.rota)] || []).push({ nome: p.nome, lat: +p.lat, lng: +p.lng }),
+    (stopsBy[String(p.rota)] = stopsBy[String(p.rota)] || []).push({ nome: p.nome, lat: +p.lat, lng: +p.lng, ordem: +p.ordem }),
   );
 }
 
@@ -123,6 +125,7 @@ async function load() {
 const sim = [];
 function initSim() {
   routes.forEach(r => {
+    if ((stopsBy[r.id] || []).length < 2) return; // rota nova ainda sem paradas
     const s = stopsBy[r.id],
       cum = [0];
     for (let i = 1; i < s.length; i++) cum.push(cum[i - 1] + dist(s[i - 1].lat, s[i - 1].lng, s[i].lat, s[i].lng));
@@ -286,6 +289,10 @@ function stopStates(r, bs) {
 // Para voltar a mostrar km e minutos, use x.m (metros) e x.min (minutos) aqui.
 const TXT = {passou: 'Já passou', local: 'No local', chegando: 'Chegando', perto: 'Perto'};
 const tx = x => TXT[x.st] || '';
+function proximaParada(r, b) { // a próxima parada que o motorista vai fazer (ou onde ele está parado)
+  if (b.proxima == null || b.proxima === '') return null;
+  return (stopsBy[r.id] || [])[Number(b.proxima)] || null;
+}
 function state(b) {
   if (!b || !(b.ativo === true || b.ativo === 'TRUE')) return 'off';
   const age = Date.now() + offset - Number(b.ts);
@@ -310,22 +317,25 @@ function render() {
         n = bs.length; // o aviso "Sem sinal" aparece só na linha de cada motorista, não no topo do cartão
       const [st, cl] = n ? [n + ' em operação', 'ok'] : ['Fora de operação', 'off'];
       const lines = bs
-        .map(
-          b =>
-            '<div class="bus" style="--c:' +
+        .map(b => {
+          const p = proximaParada(r, b);
+          return (
+            '<div class="bus" role="button" tabindex="0" title="Ver no mapa" data-bus="' +
+            esc(b.motorista) +
+            '" style="--c:' +
             esc(r.cor) +
             '"><div class="top peq"><span class="bico">' +
             BUS_SVG +
-            '</span><b>' +
+            '</span><div class="bnome"><b>' +
             esc(b.motorista) +
             '</b>' +
-            '<span class="mut">· Rota ' +
-            esc(r.id) +
-            '</span>' +
+            (p ? '<span class="mut">' + (b.estado === 'local' ? 'No local: ' : 'Próxima parada: ') + esc(p.nome) + '</span>' : '') +
+            '</div>' +
             // "Sem sinal" aparece só no cartão do motorista que perdeu o sinal
             (state(b) === 'warn' ? '<span class="pill warn">Sem sinal</span>' : '') +
-            '</div></div>',
-        )
+            '</div></div>'
+          );
+        })
         .join('');
       const tl =
         selRoute === r.id
@@ -338,9 +348,11 @@ function render() {
                 return (
                   '<div class="st' +
                   (x.st === 'passou' ? ' done' : '') +
-                  '"><span class="n">' +
-                  (x.st === 'passou' ? '✓' : '') +
-                  '</span><b>' +
+                  '" role="button" tabindex="0" title="Ver no mapa" data-r="' +
+                  esc(r.id) +
+                  '" data-i="' +
+                  i +
+                  '"><b>' +
                   esc(p.nome) +
                   '</b><span class="tx s-' +
                   x.st +
@@ -430,7 +442,52 @@ function render() {
     }
   });
 }
+/* Toque no nome do motorista ou de uma parada (na lista de rotas): o mapa vai até lá */
+function mostrarNoMapa(lat, lng, zoom) {
+  $('map').scrollIntoView({ behavior: 'smooth', block: 'center' }); // no celular, sobe até o mapa
+  map.flyTo([lat, lng], Math.max(map.getZoom(), zoom), { duration: 0.8 }); // zoom de rua: motorista 16, parada 17 (mude aqui)
+}
+function irParaMotorista(nome) {
+  const b = buses.find(x => String(x.motorista) === nome && state(x) !== 'off');
+  if (!b) return;
+  const rid = String(b.rota);
+  if (selRoute !== rid) {
+    selRoute = rid; // mostra as paradas da rota dele
+    paint();
+    lastList = '';
+    render();
+  }
+  mostrarNoMapa(Number(b.lat), Number(b.lng), 16);
+  setTimeout(() => mk[nome] && mk[nome].openTooltip(), 900);
+}
+function irParaParada(rid, i) { // hotel, Iguatemi, Centro de Eventos...
+  const p = (stopsBy[rid] || [])[i],
+    o = R[rid];
+  if (!p || !o) return;
+  if (selRoute !== rid) {
+    selRoute = rid;
+    paint();
+    lastList = '';
+    render();
+  }
+  mostrarNoMapa(p.lat, p.lng, 17);
+  setTimeout(() => o.dots[i] && o.dots[i].openTooltip(), 900);
+}
+$('list').addEventListener('keydown', e => {
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  if (e.target.classList.contains('bus')) {
+    e.preventDefault();
+    irParaMotorista(e.target.dataset.bus);
+  } else if (e.target.classList.contains('st')) {
+    e.preventDefault();
+    irParaParada(e.target.dataset.r, +e.target.dataset.i);
+  }
+});
 $('list').addEventListener('click', e => {
+  const bus = e.target.closest('.bus');
+  if (bus) return irParaMotorista(bus.dataset.bus); // não fecha/abre a rota
+  const st = e.target.closest('.st');
+  if (st) return irParaParada(st.dataset.r, +st.dataset.i);
   const c = e.target.closest('.rt');
   if (!c) return;
   selRoute = selRoute === c.dataset.id ? null : c.dataset.id;
@@ -449,7 +506,11 @@ try {
   sess = JSON.parse(localStorage.getItem('bl_sess'));
 } catch (e) {}
 const rpc = async (fn, b) =>
-  DEMO
+  DEMO && fn === 'admin_rota_salvar'
+    ? demoRota(b)
+    : DEMO && (fn.startsWith('admin_parada') || fn === 'admin_lista' || fn === 'admin_salvar_pin')
+    ? demoParada(fn, b)
+    : DEMO
     ? {
         lista_motoristas: ['João Silva', 'Maria Souza'],
         login: b && b.p_pin === '1234' ? { nome: b.p_nome, token: 'demo' } : { error: 'login' },
@@ -522,11 +583,16 @@ async function loadDrivers() {
     $('drv').innerHTML = nomes.map(n => '<option>' + esc(n) + '</option>').join('');
   } catch (e) {}
 }
-async function initDriver() {
-  await loadDrivers();
+function fillRsel() { // lista de rotas do motorista (mantém a escolhida)
+  const v = $('rsel').value;
   $('rsel').innerHTML = routes
     .map(r => '<option value="' + esc(r.id) + '">' + esc(r.id + ' · ' + r.nome) + '</option>')
     .join('');
+  if (v && routes.some(r => r.id === v)) $('rsel').value = v;
+}
+async function initDriver() {
+  await loadDrivers();
+  fillRsel();
   dui();
 }
 $('btnIn').onclick = async () => {
@@ -831,6 +897,9 @@ async function send(cur) {
         localStorage.removeItem('bl_sess');
       } catch (e) {}
       stop('Sessão expirada. Entre novamente.');
+    } else if (r.error === 'finalizado') {
+      stop('O administrador finalizou o seu percurso. Toque em “Iniciar percurso” se ainda estiver rodando.');
+      clearSaved(); // sem botão "Retomar"
     } else if (r.error) $('dErr').textContent = 'Erro ao enviar (' + r.error + ').';
     else {
       cur.lastOk = Date.now();
@@ -844,7 +913,22 @@ async function send(cur) {
 }
 
 /* ---------- ÁREA DO ADMIN (abra o site com #admin no final: index.html#admin) ---------- */
-let adm = null; // token do admin: fica só na memória (fechou a aba, saiu)
+// Token do admin: fica guardado só nesta aba (sessionStorage). Recarregar a página mantém você logado;
+// fechar a aba ou tocar em "Sair" encerra. No servidor a sessão vale 2 horas.
+let adm = (() => {
+  try {
+    return sessionStorage.getItem('bl_adm');
+  } catch (e) {
+    return null;
+  }
+})();
+function admSet(t) {
+  adm = t;
+  try {
+    if (t) sessionStorage.setItem('bl_adm', t);
+    else sessionStorage.removeItem('bl_adm');
+  } catch (e) {}
+}
 const amsg = (t, ok) => {
   $('aMsg').textContent = t;
   $('aMsg').classList.toggle('ok-msg', !!ok); // a cor está no style.css (.err.ok-msg)
@@ -852,6 +936,9 @@ const amsg = (t, ok) => {
 function aui() {
   $('aLogin').hidden = !!adm;
   $('aPanel').hidden = !adm;
+  $('aRotas').hidden = !adm;
+  $('aParadas').hidden = !adm;
+  if (adm) pInit();
 }
 const onlineDe = n => {
   const b = buses.find(x => String(x.motorista) === n && state(x) !== 'off');
@@ -864,7 +951,7 @@ async function aList() {
     r = await rpc('admin_lista', { p_token: adm }); // nomes + PIN (função nova: veja admin_extras.sql)
   } catch (e) {}
   if (r && r.error) {
-    adm = null;
+    admSet(null);
     aui();
     $('aErr').textContent = 'Sessão expirada. Entre novamente.';
     return;
@@ -874,14 +961,14 @@ async function aList() {
     // função nova ainda não instalada no banco: mostra só os nomes
     r = await rpc('admin_motoristas', { p_token: adm });
     if (r && r.error) {
-      adm = null;
+      admSet(null);
       aui();
       $('aErr').textContent = 'Sessão expirada. Entre novamente.';
       return;
     }
     r = r.map(n => ({ nome: n, pin: null }));
   }
-  $('aHint').textContent = completo ? 'Os PINs só aparecem para motoristas cujo PIN foi salvo por esta tela; para os antigos, salve o PIN de novo.' : 'Para ver os PINs e finalizar percursos, rode o arquivo admin_extras.sql no Supabase.';
+  $('aHint').textContent = completo ? '“Indisponível”: o PIN está salvo no Supabase só embaralhado (serve para conferir o login, mas não dá para mostrar). Toque em “Gerar novo PIN” ou “Editar PIN” e ele passa a aparecer aqui.' : 'Para ver os PINs e finalizar percursos, rode o arquivo admin_extras.sql no Supabase.';
   r.sort((x, y) => String(x.nome).localeCompare(String(y.nome), 'pt', { sensitivity: 'base' }));
   $('aList').innerHTML =
     r
@@ -897,12 +984,14 @@ async function aList() {
           '</div><div class="row mt6"><span class="mut">PIN: <code class="pinv" data-pin="' +
           esc(d.pin || '') +
           '">' +
-          (d.pin ? '••••' : '—') +
+          (d.pin ? '••••' : 'indisponível') +
           '</code></span>' +
           (d.pin ? '<button class="btn ghost sm" data-eye="1">👁 Ver</button>' : '') +
           '</div><div class="acts"><button class="btn ghost sm" data-edit="' +
           esc(d.nome) +
-          '">Editar PIN</button>' +
+          '">Editar PIN</button><button class="btn ghost sm" data-gen="' +
+          esc(d.nome) +
+          '">Gerar novo PIN</button>' +
           (on ? '<button class="btn ghost sm" data-fim="' + esc(d.nome) + '">Finalizar percurso</button>' : '') +
           '<button class="btn ghost sm" data-del="' +
           esc(d.nome) +
@@ -919,7 +1008,7 @@ $('aIn').onclick = async () => {
       $('aErr').textContent = r.error === 'bloqueado' ? 'Muitas tentativas. Aguarde 15 minutos.' : 'Senha incorreta.';
       return;
     }
-    adm = r.token;
+    admSet(r.token);
     $('aPass').value = '';
     aui();
     await aList();
@@ -928,7 +1017,7 @@ $('aIn').onclick = async () => {
   }
 };
 $('aOut').onclick = () => {
-  adm = null;
+  admSet(null);
   aui();
 };
 $('aSave').onclick = async () => {
@@ -938,21 +1027,24 @@ $('aSave').onclick = async () => {
   if (!nome) return amsg('Digite o nome do motorista.');
   if (!/^[0-9]{4,8}$/.test(pin)) return amsg('O PIN deve ter de 4 a 8 números.');
   try {
-    let r;
+    let r,
+      semPin = false;
     try {
       r = await rpc('admin_salvar_pin', { p_token: adm, p_nome: nome, p_pin: pin }); // salva e guarda o PIN para o admin poder ver
     } catch (e) {
+      semPin = true;
       r = await rpc('admin_salvar', { p_token: adm, p_nome: nome, p_pin: pin }); // função nova não instalada: salva sem guardar o PIN para visualização
     }
     if (r.error === 'token') {
-      adm = null;
+      admSet(null);
       aui();
       return;
     }
     if (r.error) return amsg('Erro: ' + r.error);
     $('aNome').value = '';
     $('aPin').value = '';
-    amsg('Motorista salvo.', true);
+    if (semPin) amsg('Motorista salvo, mas o PIN não ficou visível aqui: rode o admin_extras.sql no Supabase.');
+    else amsg('Motorista salvo.', true);
     await aList();
     loadDrivers();
   } catch (e) {
@@ -971,6 +1063,34 @@ $('aList').addEventListener('click', async e => {
     t.textContent = vis ? '👁 Ver' : '🙈 Ocultar';
     return;
   }
+  if (t.dataset.gen) {
+    // gera um PIN novo de 6 números, salva guardando o PIN para o admin ver, e já mostra na linha do motorista
+    const n = t.dataset.gen;
+    if (!confirm('Gerar um novo PIN para ' + n + '? O PIN antigo deixa de valer e ele precisa entrar de novo.')) return;
+    const pin = String((crypto.getRandomValues(new Uint32Array(1))[0] % 900000) + 100000);
+    try {
+      const r = await rpc('admin_salvar_pin', { p_token: adm, p_nome: n, p_pin: pin });
+      if (r.error === 'token') {
+        admSet(null);
+        return aui();
+      }
+      if (r.error) return amsg('Erro: ' + r.error);
+      await aList();
+      const item = [...$('aList').querySelectorAll('.adm-item')].find(x => x.querySelector('b').textContent === n);
+      const c = item && item.querySelector('.pinv');
+      if (c && c.dataset.pin) {
+        c.textContent = c.dataset.pin;
+        c.dataset.vis = '1';
+        const eye = item.querySelector('[data-eye]');
+        if (eye) eye.textContent = '🙈 Ocultar';
+        item.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        amsg('Novo PIN de ' + n + ': ' + pin, true);
+      } else amsg('PIN trocado, mas não consegui guardá-lo para mostrar. Rode o admin_extras.sql no Supabase.');
+    } catch (err) {
+      amsg('Não foi possível gerar o PIN. Rode o admin_extras.sql no Supabase.');
+    }
+    return;
+  }
   if (t.dataset.edit) {
     // leva o nome para o formulário: é só digitar o novo PIN e salvar
     $('aNome').value = t.dataset.edit;
@@ -987,7 +1107,7 @@ $('aList').addEventListener('click', async e => {
     try {
       const r = await rpc('admin_finalizar', { p_token: adm, p_nome: n });
       if (r.error === 'token') {
-        adm = null;
+        admSet(null);
         aui();
         return;
       }
@@ -1011,6 +1131,233 @@ $('aList').addEventListener('click', async e => {
     amsg('Falha ao excluir.');
   }
 });
+
+/* ---------- ADMIN: ROTAS (criar uma rota nova e editar nome, cor e próxima rota do ciclo) ---------- */
+let rEdit = null; // número da rota que está sendo editada (null = criando uma nova)
+const rmsg = (t, ok) => {
+  $('rMsg').textContent = t;
+  $('rMsg').classList.toggle('ok-msg', !!ok);
+};
+function rLimpar() {
+  rEdit = null;
+  const nums = routes.map(r => parseInt(r.id, 10)).filter(n => !isNaN(n));
+  $('rId').value = String(nums.length ? Math.max(...nums) + 1 : 1); // sugere o próximo número
+  $('rId').disabled = false;
+  $('rNome').value = '';
+  $('rCor').value = '#2563eb';
+  $('rTit').textContent = 'Adicionar rota';
+  $('rSave').textContent = 'Adicionar rota';
+  $('rCancel').hidden = true;
+  rSeg('');
+}
+function rSeg(sel) { // "quando terminar, passa para": as outras rotas
+  $('rSeg').innerHTML =
+    '<option value="">Nenhuma (volta para a 1ª parada da mesma rota)</option>' +
+    routes.filter(r => r.id !== $('rId').value).map(r => '<option value="' + esc(r.id) + '">Rota ' + esc(r.id + ' · ' + r.nome) + '</option>').join('');
+  $('rSeg').value = sel || '';
+}
+function rRender() {
+  $('rLista').innerHTML =
+    routes
+      .map(
+        r =>
+          '<div class="row item"><span><span class="dot" style="background:' + esc(r.cor) + '"></span> <b>' + esc(r.id) + '</b> · ' + esc(r.nome) +
+          '</span><button class="btn ghost sm" data-rid="' + esc(r.id) + '">Editar</button></div>',
+      )
+      .join('') || '<p class="mut">Nenhuma rota cadastrada.</p>';
+  if (rEdit === null && !$('rNome').value) rLimpar();
+}
+$('rId').addEventListener('input', () => rSeg($('rSeg').value));
+$('rCancel').onclick = () => {
+  rLimpar();
+  rmsg('');
+};
+$('rLista').addEventListener('click', e => {
+  const t = e.target.closest('button');
+  const r = t && routes.find(x => x.id === t.dataset.rid);
+  if (!r) return;
+  rEdit = r.id; // leva os dados para o formulário
+  $('rId').value = r.id;
+  $('rId').disabled = true; // o número não muda; só nome, cor e próxima rota
+  $('rNome').value = r.nome;
+  $('rCor').value = /^#[0-9a-f]{6}$/i.test(r.cor) ? r.cor : '#2563eb';
+  $('rTit').textContent = 'Editar rota ' + r.id;
+  $('rSave').textContent = 'Salvar alterações';
+  $('rCancel').hidden = false;
+  rSeg(r.seguinte || '');
+  rmsg('');
+  $('rNome').scrollIntoView({ block: 'center', behavior: 'smooth' });
+  $('rNome').focus();
+});
+$('rSave').onclick = async () => {
+  const id = $('rId').value.trim(),
+    nome = $('rNome').value.trim();
+  if (!/^[A-Za-z0-9_-]{1,10}$/.test(id)) return rmsg('O número da rota deve ter até 10 letras ou números, sem espaços.');
+  if (!nome) return rmsg('Digite o nome da rota.');
+  if (!rEdit && routes.some(r => r.id === id)) return rmsg('Já existe a rota ' + id + '. Escolha outro número.');
+  rmsg('');
+  try {
+    const r = await rpc('admin_rota_salvar', { p_token: adm, p_id: id, p_nome: nome, p_cor: $('rCor').value, p_seguinte: $('rSeg').value || null, p_novo: !rEdit });
+    if (r.error === 'token') return pExpirou();
+    if (r.error)
+      return rmsg(
+        { existe: 'Já existe uma rota com esse número.', dados: 'Confira o número, o nome e a cor.', seguinte: 'A próxima rota escolhida é inválida.' }[r.error] || 'Erro: ' + r.error,
+      );
+    const nova = !rEdit;
+    await recarregarParadas(); // atualiza o mapa, a lista de rotas e o seletor do motorista
+    rLimpar();
+    if (nova) {
+      $('pRota').value = id; // já deixa a rota nova escolhida para você adicionar as paradas
+      pLimpar();
+      pRender();
+    }
+    rmsg(nova ? 'Rota ' + id + ' criada. Agora adicione as paradas dela mais abaixo, em “Paradas das rotas”.' : 'Rota atualizada.', true);
+  } catch (e) {
+    rmsg(e && /Failed to fetch|NetworkError/i.test(String(e.message)) ? 'Falha de conexão. Tente de novo.' : 'Não foi possível salvar. Rode o admin_rotas.sql no Supabase.');
+  }
+};
+function demoRota(b) { // só para a demonstração: altera as rotas na memória
+  const r = D_ROUTES.find(x => x.id === b.p_id);
+  if (b.p_novo) {
+    D_ROUTES.push({ id: b.p_id, nome: b.p_nome, cor: b.p_cor, seguinte: b.p_seguinte || '' });
+    D_STOPS[b.p_id] = [];
+  } else if (r) Object.assign(r, { nome: b.p_nome, cor: b.p_cor, seguinte: b.p_seguinte || '' });
+  return { ok: true };
+}
+
+/* ---------- ADMIN: PARADAS DAS ROTAS (adicionar, editar, mover e excluir) ---------- */
+let pEdit = null; // ordem da parada que está sendo editada (null = adicionando uma nova)
+const pmsg = (t, ok) => {
+  $('pMsg').textContent = t;
+  $('pMsg').classList.toggle('ok-msg', !!ok);
+};
+function pLimpar() {
+  pEdit = null;
+  $('pNome').value = '';
+  $('pCoord').value = '';
+  $('pPos').disabled = false;
+  $('pTit').textContent = 'Adicionar parada';
+  $('pSave').textContent = 'Adicionar parada';
+  $('pCancel').hidden = true;
+}
+function pInit() {
+  const v = $('pRota').value;
+  $('pRota').innerHTML = routes.map(r => '<option value="' + esc(r.id) + '">' + esc(r.id + ' · ' + r.nome) + '</option>').join('');
+  if (v && routes.some(r => r.id === v)) $('pRota').value = v;
+  pRender();
+  rRender();
+}
+function pRender() {
+  const rid = $('pRota').value,
+    s = stopsBy[rid] || [];
+  $('pLista').innerHTML =
+    s
+      .map(
+        (p, i) =>
+          '<div class="row item"><span><b>' + (i + 1) + '.</b> ' + esc(p.nome) + '</span><span class="p-acts">' +
+          '<button class="btn ghost sm" data-act="up" data-o="' + p.ordem + '" title="Subir"' + (i === 0 ? ' disabled' : '') + '>↑</button>' +
+          '<button class="btn ghost sm" data-act="down" data-o="' + p.ordem + '" title="Descer"' + (i === s.length - 1 ? ' disabled' : '') + '>↓</button>' +
+          '<button class="btn ghost sm" data-act="edit" data-o="' + p.ordem + '">Editar</button>' +
+          '<button class="btn ghost sm" data-act="del" data-o="' + p.ordem + '">Excluir</button></span></div>',
+      )
+      .join('') || '<p class="mut">Nenhuma parada nesta rota.</p>';
+  $('pPos').innerHTML =
+    '<option value="">No fim da rota</option>' +
+    s.map((p, i) => '<option value="' + p.ordem + '">Antes de: ' + (i + 1) + '. ' + esc(p.nome) + '</option>').join('');
+}
+async function recarregarParadas() { // lê as paradas de novo e refaz os pontos do mapa
+  await load();
+  Object.values(R).forEach(o => o.dots.forEach(d => map.removeLayer(d)));
+  Object.keys(R).forEach(k => delete R[k]);
+  build();
+  lastList = '';
+  render();
+  pInit();
+  fillRsel();
+}
+function pExpirou() {
+  admSet(null);
+  aui();
+  $('aErr').textContent = 'Sessão expirada. Entre novamente.';
+}
+async function pChamar(fn, args, okMsg) { // chama o servidor e mostra o resultado
+  pmsg('');
+  try {
+    const r = await rpc(fn, { p_token: adm, p_rota: $('pRota').value, ...args });
+    if (r.error === 'token') return pExpirou();
+    if (r.error) return pmsg(r.error === 'dados' ? 'Confira o nome e as coordenadas.' : 'Erro: ' + r.error);
+    await recarregarParadas();
+    pmsg(okMsg, true);
+    return true;
+  } catch (e) {
+    pmsg('Falha de conexão. Tente de novo.');
+  }
+}
+$('pRota').onchange = () => {
+  pLimpar();
+  pmsg('');
+  pRender();
+};
+$('pCancel').onclick = () => {
+  pLimpar();
+  pmsg('');
+};
+$('pSave').onclick = async () => {
+  const nome = $('pNome').value.trim(),
+    m = $('pCoord').value.match(/^\s*(-?\d+(?:\.\d+)?)\s*[,;\s]\s*(-?\d+(?:\.\d+)?)\s*$/); // "-3.7230, -38.4920" (como o Google Maps copia)
+  if (!nome) return pmsg('Digite o nome da parada.');
+  if (!m) return pmsg('Cole as coordenadas do Google Maps, por exemplo: -3.7230, -38.4920');
+  const lat = Number(m[1]),
+    lng = Number(m[2]);
+  if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return pmsg('Coordenadas inválidas.');
+  const ok = pEdit
+    ? await pChamar('admin_parada_editar', { p_ordem: pEdit, p_nome: nome, p_lat: lat, p_lng: lng }, 'Parada atualizada.')
+    : await pChamar('admin_parada_inserir', { p_pos: $('pPos').value ? Number($('pPos').value) : null, p_nome: nome, p_lat: lat, p_lng: lng }, 'Parada adicionada.');
+  if (ok) pLimpar();
+};
+$('pLista').addEventListener('click', async e => {
+  const t = e.target.closest('button');
+  if (!t || t.disabled) return;
+  const o = Number(t.dataset.o),
+    p = (stopsBy[$('pRota').value] || []).find(x => x.ordem === o);
+  if (!p) return;
+  if (t.dataset.act === 'up' || t.dataset.act === 'down')
+    return pChamar('admin_parada_mover', { p_ordem: o, p_dir: t.dataset.act === 'up' ? -1 : 1 }, 'Ordem atualizada.');
+  if (t.dataset.act === 'del') {
+    if (!confirm('Excluir a parada "' + p.nome + '" da rota ' + $('pRota').value + '?')) return;
+    return pChamar('admin_parada_excluir', { p_ordem: o }, 'Parada excluída.');
+  }
+  if (t.dataset.act === 'edit') { // leva os dados para o formulário
+    pEdit = o;
+    $('pNome').value = p.nome;
+    $('pCoord').value = p.lat + ', ' + p.lng;
+    $('pPos').disabled = true;
+    $('pTit').textContent = 'Editar parada';
+    $('pSave').textContent = 'Salvar alterações';
+    $('pCancel').hidden = false;
+    pmsg('');
+    $('pNome').scrollIntoView({ block: 'center', behavior: 'smooth' });
+    $('pNome').focus();
+  }
+});
+const demoPins = { 'João Silva': '1234', 'Maria Souza': null };
+function demoParada(fn, b) { // só para a demonstração (sem Supabase): altera dados na memória
+  if (fn === 'admin_lista') return Object.keys(demoPins).map(n => ({ nome: n, pin: demoPins[n] }));
+  if (fn === 'admin_salvar_pin') {
+    demoPins[b.p_nome] = b.p_pin;
+    return { ok: true };
+  }
+  const a = D_STOPS[b.p_rota],
+    i = (b.p_ordem || 0) - 1;
+  if (fn === 'admin_parada_inserir') a.splice(b.p_pos ? Math.min(b.p_pos - 1, a.length) : a.length, 0, [b.p_nome, b.p_lat, b.p_lng]);
+  if (fn === 'admin_parada_editar') a[i] = [b.p_nome, b.p_lat, b.p_lng];
+  if (fn === 'admin_parada_excluir') a.splice(i, 1);
+  if (fn === 'admin_parada_mover') {
+    const j = i + b.p_dir;
+    if (j >= 0 && j < a.length) [a[i], a[j]] = [a[j], a[i]];
+  }
+  return { ok: true };
+}
 
 /* ---------- abas ---------- */
 function tab(n) {
@@ -1119,6 +1466,10 @@ if (ehIphone) { instBtn(); instMostrar(true); }
   }
   build();
   initDriver();
+  if (adm) {
+    aui(); // voltou com a sessão do admin aberta: mostra o painel e confere no servidor se ainda vale
+    aList();
+  }
   if (DEMO) {
     $('demo').hidden = false;
     initSim();
