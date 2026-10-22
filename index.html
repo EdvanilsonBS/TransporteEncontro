@@ -81,6 +81,34 @@
       <p class="mut" id="aHint"></p>
       <div id="aList"></div>
     </div>
+    <!-- rotas: criar e editar (aparece depois de entrar) -->
+    <div id="aRotas" class="card mt12" hidden>
+      <b class="titulo">Rotas</b>
+      <div id="rLista"></div>
+      <div class="mt"><b class="titulo" id="rTit">Adicionar rota</b></div>
+      <label for="rId" class="mt">Número da rota</label><input id="rId" autocomplete="off" maxlength="10">
+      <label for="rNome" class="mt">Nome da rota</label><input id="rNome" placeholder="Ex.: Hotéis → Centro de Eventos" autocomplete="off">
+      <label for="rCor" class="mt">Cor no mapa</label><input id="rCor" type="color" value="#2563eb">
+      <label for="rSeg" class="mt">Quando esta rota terminar, o motorista passa para</label><select id="rSeg"></select>
+      <div class="err" id="rMsg"></div>
+      <button class="btn" id="rSave">Adicionar rota</button>
+      <button class="btn ghost largo" id="rCancel" hidden>Cancelar edição</button>
+      <p class="mut">Depois de criar a rota, adicione as paradas dela no cartão “Paradas das rotas”, logo abaixo. Para a rota entrar no ciclo automático, escolha a rota nova como “próxima” na rota que vem antes dela.</p>
+    </div>
+    <!-- paradas das rotas (aparece depois de entrar) -->
+    <div id="aParadas" class="card mt12" hidden>
+      <b class="titulo">Paradas das rotas</b>
+      <label for="pRota" class="mt">Rota</label><select id="pRota"></select>
+      <div id="pLista"></div>
+      <div class="mt"><b class="titulo" id="pTit">Adicionar parada</b></div>
+      <label for="pNome" class="mt">Nome da parada</label><input id="pNome" autocomplete="off">
+      <label for="pCoord" class="mt">Coordenadas (cole do Google Maps)</label><input id="pCoord" placeholder="-3.7230, -38.4920" autocomplete="off">
+      <label for="pPos" class="mt">Posição na rota</label><select id="pPos"></select>
+      <div class="err" id="pMsg"></div>
+      <button class="btn" id="pSave">Adicionar parada</button>
+      <button class="btn ghost largo" id="pCancel" hidden>Cancelar edição</button>
+      <p class="mut">Os hotéis valem para duas rotas: a 1 (ida) e a 4 (volta, em ordem invertida). Adicione nas duas. Evite mexer com ônibus rodando.</p>
+    </div>
   </div>
 </section>
 <!-- tela escura do motorista (modo economia) -->
