@@ -9,6 +9,15 @@ const STALE = 60000; // sem sinal do ônibus por mais que isso => "Sem sinal" (m
 const LIM_CHEGANDO = 150; // metros: abaixo disso aparece "Chegando"
 const LIM_PERTO = 1000; // metros: abaixo disso aparece "Perto" (acima: "Longe")
 
+// --- Mapa de fundo. Para trocar de provedor (se um dia o atual cair ou bloquear), mude só estas duas linhas.
+// Endereço pedido pela política do OpenStreetMap: https://tile.openstreetmap.org/{z}/{x}/{y}.png (sem {s}).
+// Exemplo CARTO escuro: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png' (e acrescente subdomains: 'abcd' em L.tileLayer)
+const MAPA_URL = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+const MAPA_CREDITO = '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'; // o crédito precisa ficar visível
+
+// --- Paradas novas aparecem para quem já está com o site aberto (sem recarregar a página)
+const ATUALIZAR_PARADAS = 5 * 60000; // de quanto em quanto tempo o site relê rotas e paradas (ms)
+
 // --- Tela de carregamento (a logo fica no index.html, procure por "TROQUE A LOGO AQUI")
 const SPLASH_MIN = 2500; // tempo mínimo da logo na tela (ms)
 const SPLASH_MAX = 10000; // limite: some mesmo que os dados não cheguem (ms)
@@ -107,18 +116,21 @@ const sb = async (p, o = {}) => {
   }
 };
 async function load() {
-  stopsBy = {}; // zera antes de carregar: se tentar de novo, as paradas não duplicam
+  const novas = {}; // monta tudo em separado e só troca no fim: se a internet cair no meio, a tela não perde as paradas
   if (DEMO) {
     routes = D_ROUTES;
-    routes.forEach(r => (stopsBy[r.id] = D_STOPS[r.id].map((p, i) => ({ nome: p[0], lat: p[1], lng: p[2], ordem: i + 1 }))));
+    routes.forEach(r => (novas[r.id] = D_STOPS[r.id].map((p, i) => ({ nome: p[0], lat: p[1], lng: p[2], ordem: i + 1 }))));
+    stopsBy = novas;
     return;
   }
-  routes = (await sb('rotas?select=*'))
+  const rs = (await sb('rotas?select=*'))
     .map(r => ({ ...r, id: String(r.id) }))
     .sort((a, b) => a.id.localeCompare(b.id, 'pt', { numeric: true }));
   (await sb('paradas?select=*&order=rota,ordem')).forEach(p =>
-    (stopsBy[String(p.rota)] = stopsBy[String(p.rota)] || []).push({ nome: p.nome, lat: +p.lat, lng: +p.lng, ordem: +p.ordem }),
+    (novas[String(p.rota)] = novas[String(p.rota)] || []).push({ nome: p.nome, lat: +p.lat, lng: +p.lng, ordem: +p.ordem }),
   );
+  routes = rs;
+  stopsBy = novas;
 }
 
 /* simulação para a demonstração */
@@ -168,9 +180,9 @@ async function poll() {
 
 /* ---------- mapa e lista de rotas ---------- */
 const map = L.map('map').setView([-3.7319, -38.5267], 12);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+L.tileLayer(MAPA_URL, {
   maxZoom: 19,
-  attribution: '© OpenStreetMap',
+  attribution: MAPA_CREDITO,
 }).addTo(map);
 const R = {},
   mk = {};
@@ -214,10 +226,10 @@ const pinIcon = (r, b, warn) =>
 
 /* Só as paradas ficam no mapa (sem a linha entre elas). Com uma rota selecionada aparecem as paradas dela;
    sem seleção, as paradas de todas as rotas aparecem como pontinhos. Com bastante zoom, o nome aparece ao lado. */
-function build() {
+function build(refit = true) {
   routes.forEach(r => {
     const s = stopsBy[r.id] || [];
-    if (s.length < 2) return;
+    if (!s.length) return; // (antes exigia 2 paradas: uma rota nova com 1 parada só não aparecia)
     const dots = s.map((p, i) => {
       const m = L.marker([p.lat, p.lng], { icon: stopIcon(r, i, 'sem', false), zIndexOffset: 200 });
       m._k = 'sem';
@@ -227,7 +239,7 @@ function build() {
   });
   paint();
   stopLabels();
-  focusRoute();
+  if (refit) focusRoute();
 }
 function paint() {
   Object.entries(R).forEach(([id, o]) => {
@@ -318,7 +330,6 @@ function render() {
       const [st, cl] = n ? [n + ' em operação', 'ok'] : ['Fora de operação', 'off'];
       const lines = bs
         .map(b => {
-          const p = proximaParada(r, b);
           return (
             '<div class="bus" role="button" tabindex="0" title="Ver no mapa" data-bus="' +
             esc(b.motorista) +
@@ -329,7 +340,6 @@ function render() {
             '</span><div class="bnome"><b>' +
             esc(b.motorista) +
             '</b>' +
-            (p ? '<span class="mut">' + (b.estado === 'local' ? 'No local: ' : 'Próxima parada: ') + esc(p.nome) + '</span>' : '') +
             '</div>' +
             // "Sem sinal" aparece só no cartão do motorista que perdeu o sinal
             (state(b) === 'warn' ? '<span class="pill warn">Sem sinal</span>' : '') +
@@ -506,8 +516,8 @@ try {
   sess = JSON.parse(localStorage.getItem('bl_sess'));
 } catch (e) {}
 const rpc = async (fn, b) =>
-  DEMO && fn === 'admin_rota_salvar'
-    ? demoRota(b)
+  DEMO && (fn === 'admin_rota_salvar' || fn === 'admin_rota_excluir')
+    ? demoRota(b, fn)
     : DEMO && (fn.startsWith('admin_parada') || fn === 'admin_lista' || fn === 'admin_salvar_pin')
     ? demoParada(fn, b)
     : DEMO
@@ -1162,7 +1172,8 @@ function rRender() {
       .map(
         r =>
           '<div class="row item"><span><span class="dot" style="background:' + esc(r.cor) + '"></span> <b>' + esc(r.id) + '</b> · ' + esc(r.nome) +
-          '</span><button class="btn ghost sm" data-rid="' + esc(r.id) + '">Editar</button></div>',
+          '</span><span class="p-acts"><button class="btn ghost sm" data-rid="' + esc(r.id) + '">Editar</button>' +
+          '<button class="btn ghost sm" data-rdel="' + esc(r.id) + '">Excluir</button></span></div>',
       )
       .join('') || '<p class="mut">Nenhuma rota cadastrada.</p>';
   if (rEdit === null && !$('rNome').value) rLimpar();
@@ -1172,8 +1183,35 @@ $('rCancel').onclick = () => {
   rLimpar();
   rmsg('');
 };
+async function rExcluir(id) {
+  const r = routes.find(x => x.id === id);
+  if (!r) return;
+  const n = (stopsBy[id] || []).length,
+    ref = routes.filter(x => x.seguinte === id).map(x => x.id);
+  if (
+    !confirm(
+      'Excluir a rota ' + id + ' · ' + r.nome + '?\n\nIsso apaga também as ' + n + ' parada(s) dela e não dá para desfazer.' +
+        (ref.length ? '\nA(s) rota(s) ' + ref.join(', ') + ' ficam sem “próxima rota”.' : ''),
+    )
+  )
+    return;
+  rmsg('');
+  try {
+    const x = await rpc('admin_rota_excluir', { p_token: adm, p_id: id });
+    if (x.error === 'token') return pExpirou();
+    if (x.error === 'em_uso') return rmsg('Há motorista rodando nesta rota. Finalize o percurso dele antes de excluir.');
+    if (x.error) return rmsg('Erro: ' + x.error);
+    if (rEdit === id) rLimpar();
+    if (selRoute === id) selRoute = (routes.find(y => y.id !== id) || {}).id || null; // o mapa passa para outra rota
+    await recarregarParadas();
+    rmsg('Rota ' + id + ' excluída.', true);
+  } catch (e) {
+    rmsg('Não foi possível excluir. Rode o admin_rotas.sql no Supabase.');
+  }
+}
 $('rLista').addEventListener('click', e => {
   const t = e.target.closest('button');
+  if (t && t.dataset.rdel) return rExcluir(t.dataset.rdel);
   const r = t && routes.find(x => x.id === t.dataset.rid);
   if (!r) return;
   rEdit = r.id; // leva os dados para o formulário
@@ -1216,7 +1254,16 @@ $('rSave').onclick = async () => {
     rmsg(e && /Failed to fetch|NetworkError/i.test(String(e.message)) ? 'Falha de conexão. Tente de novo.' : 'Não foi possível salvar. Rode o admin_rotas.sql no Supabase.');
   }
 };
-function demoRota(b) { // só para a demonstração: altera as rotas na memória
+function demoRota(b, fn) { // só para a demonstração: altera as rotas na memória
+  if (fn === 'admin_rota_excluir') {
+    const i = D_ROUTES.findIndex(x => x.id === b.p_id);
+    if (i >= 0) D_ROUTES.splice(i, 1);
+    delete D_STOPS[b.p_id];
+    D_ROUTES.forEach(x => {
+      if (x.seguinte === b.p_id) x.seguinte = '';
+    });
+    return { ok: true };
+  }
   const r = D_ROUTES.find(x => x.id === b.p_id);
   if (b.p_novo) {
     D_ROUTES.push({ id: b.p_id, nome: b.p_nome, cor: b.p_cor, seguinte: b.p_seguinte || '' });
@@ -1264,6 +1311,27 @@ function pRender() {
   $('pPos').innerHTML =
     '<option value="">No fim da rota</option>' +
     s.map((p, i) => '<option value="' + p.ordem + '">Antes de: ' + (i + 1) + '. ' + esc(p.nome) + '</option>').join('');
+}
+/* Releitura automática das rotas e paradas: quem já está com o site aberto passa a ver paradas novas sem recarregar */
+let ultimaParadas = Date.now();
+const paradasAssinatura = () => JSON.stringify([routes, stopsBy]);
+async function atualizarParadas() {
+  if (run) return; // motorista em percurso: não troca a lista no meio do caminho (a ordem das paradas é usada nele)
+  const antes = paradasAssinatura();
+  try {
+    await load();
+  } catch (e) {
+    return; // sem internet agora: tenta de novo na próxima
+  }
+  ultimaParadas = Date.now();
+  if (paradasAssinatura() === antes) return; // nada mudou
+  Object.values(R).forEach(o => o.dots.forEach(d => map.removeLayer(d)));
+  Object.keys(R).forEach(k => delete R[k]);
+  build(false); // refaz os pontos sem mexer no zoom de quem está olhando o mapa
+  lastList = '';
+  render();
+  fillRsel();
+  if (adm) pInit();
 }
 async function recarregarParadas() { // lê as paradas de novo e refaz os pontos do mapa
   await load();
@@ -1494,8 +1562,19 @@ if (ehIphone) { instBtn(); instMostrar(true); }
       );
     })();
     setInterval(render, 1000);
+    (function loopParadas() {
+      setTimeout(
+        async () => {
+          await atualizarParadas();
+          loopParadas();
+        },
+        ATUALIZAR_PARADAS + Math.random() * 30000,
+      );
+    })();
     document.addEventListener('visibilitychange', () => {
-      if (!document.hidden) poll();
+      if (document.hidden) return;
+      poll();
+      if (Date.now() - ultimaParadas > 120000) atualizarParadas(); // voltou para a aba: confere se há paradas novas
     });
   }
 })();
