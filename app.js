@@ -28,6 +28,7 @@ const INSTALAR_VOLTAR_EM_DIAS = 7;   // se a pessoa tocar em "Agora não", só p
 
 // --- Motorista: detecção automática das paradas
 const SEND = 10000; // de quanto em quanto tempo envia a posição (ms)
+const ACC_MAX = 150; // metros: leituras de GPS com erro maior que isso são ignoradas (posição aproximada por Wi-Fi/internet)
 const T_LOCAL = 2 * 60000; // parado no ponto por 2 min  => aparece "No local"
 const T_SAIU = 3 * 60000; // mais 3 min no local        => "Já passou" e segue para o próximo ponto
 const T_SAIU_LONGA = 20 * 60000; // o mesmo, mas nas paradas longas (almoço: Iguatemi e Centro de Eventos)
@@ -204,15 +205,40 @@ const stopIcon = (r, i, st, mini) =>
     html: mini
       ? '<div class="sp mini" style="--c:' + esc(r.cor) + '"></div>'
       : '<div class="sp' +
-        (st === 'passou' ? ' done' : st === 'chegando' || st === 'local' ? ' on' : '') +
+        (st === 'chegando' || st === 'local' ? ' on' : '') +
         '" style="--c:' +
         esc(r.cor) +
         '">' +
-        (st === 'passou' ? '✓' : BUS_SVG) + // placa de ponto de ônibus (sem número; a ordem das paradas está na lista ao lado)
+        BUS_SVG + // placa de ponto de ônibus (sem número; a ordem das paradas está na lista ao lado)
         '</div>',
     iconSize: mini ? [14, 14] : [36, 50],
     iconAnchor: mini ? [7, 7] : [18, 49], // o pé da placa fica exatamente sobre a parada
   });
+
+/* ===== TRILHA: por onde cada ônibus já andou (guardada neste navegador, enquanto o site estiver aberto) ===== */
+const TRILHA_MIN = 15; // metros: só guarda o ponto se o ônibus andou pelo menos isso
+const TRILHA_MAX = 600; // máximo de pontos por ônibus
+const trails = {}; // motorista -> { r: id da rota, pts: [[lat,lng]...], line }
+function trilha(b, r, selecionada) {
+  const id = String(b.motorista);
+  let t = trails[id];
+  if (t && t.r !== r.id) {
+    map.removeLayer(t.line); // mudou de rota: começa outra trilha
+    t = trails[id] = null;
+  }
+  if (!t) {
+    t = trails[id] = { r: r.id, pts: [], line: L.polyline([], { color: r.cor, weight: 5, opacity: 0.7, lineJoin: 'round', interactive: false }) };
+  }
+  const ll = [Number(b.lat), Number(b.lng)],
+    u = t.pts[t.pts.length - 1];
+  if (!u || dist(u[0], u[1], ll[0], ll[1]) >= TRILHA_MIN) {
+    t.pts.push(ll);
+    if (t.pts.length > TRILHA_MAX) t.pts.shift();
+    t.line.setLatLngs(t.pts);
+  }
+  if (selecionada) t.line.addTo(map);
+  else map.removeLayer(t.line);
+}
 const pinIcon = (r, b, warn) =>
   L.divIcon({
     className: '',
@@ -299,7 +325,7 @@ function stopStates(r, bs) {
 }
 // Texto que aparece à direita de cada parada para o passageiro (sem distância e sem tempo).
 // Para voltar a mostrar km e minutos, use x.m (metros) e x.min (minutos) aqui.
-const TXT = {passou: 'Já passou', local: 'No local', chegando: 'Chegando', perto: 'Perto'};
+const TXT = {passou: '', local: '', chegando: '', perto: ''};
 const tx = x => TXT[x.st] || '';
 function proximaParada(r, b) { // a próxima parada que o motorista vai fazer (ou onde ele está parado)
   if (b.proxima == null || b.proxima === '') return null;
@@ -357,18 +383,16 @@ function render() {
                 const x = SS[r.id][i];
                 return (
                   '<div class="st' +
-                  (x.st === 'passou' ? ' done' : '') +
+                  ''  +
                   '" role="button" tabindex="0" title="Ver no mapa" data-r="' +
                   esc(r.id) +
                   '" data-i="' +
                   i +
                   '"><b>' +
                   esc(p.nome) +
-                  '</b><span class="tx s-' +
-                  x.st +
-                  '">' +
-                  tx(x) +
-                  '</span></div>'
+                  '</b>' +
+                  (tx(x) ? '<span class="tx s-' + x.st + '">' + tx(x) + '</span>' : '') + // sem texto, sem bolinha
+                  '</div>'
                 );
               })
               .join('') +
@@ -421,6 +445,7 @@ function render() {
       r = routes.find(x => x.id === String(b.rota));
     if (st === 'off' || !r) return;
     seen.add(id);
+    trilha(b, r, !selRoute || selRoute === r.id);
     const ll = [Number(b.lat), Number(b.lng)];
     if (mk[id] && mk[id]._r !== r.id) {
       map.removeLayer(mk[id]);
@@ -444,6 +469,12 @@ function render() {
       }
     }
     mk[id].setOpacity(warn ? 0.5 : selRoute && selRoute !== r.id ? 0.4 : 1);
+  });
+  Object.keys(trails).forEach(k => {
+    if (!seen.has(k) && trails[k]) {
+      map.removeLayer(trails[k].line); // ônibus saiu de operação: apaga a trilha
+      trails[k] = null;
+    }
   });
   Object.keys(mk).forEach(k => {
     if (!seen.has(k)) {
@@ -719,6 +750,12 @@ async function startRun(rota, prox0) {
     $('dErr').textContent = gpsMsg(fix.e);
     return;
   }
+  if (fix.p.coords.accuracy > ACC_MAX) {
+    // posição aproximada (Wi-Fi/internet), não é GPS: seria enviada com erro de quilômetros
+    $('dErr').textContent =
+      'Localização imprecisa (erro de cerca de ' + fmt(fix.p.coords.accuracy) + '). Ative a localização precisa/GPS do aparelho, vá para um local aberto e tente de novo. Em computador, use o celular.';
+    return;
+  }
   rota = String(rota);
   const last = { lat: fix.p.coords.latitude, lng: fix.p.coords.longitude, vel: fix.p.coords.speed };
   let prox = prox0;
@@ -748,6 +785,15 @@ async function startRun(rota, prox0) {
   });
   cur.watch = navigator.geolocation.watchPosition(
     p => {
+      if (p.coords.accuracy > ACC_MAX) {
+        // leitura imprecisa: não envia nem atualiza a posição (o passageiro veria o ônibus no lugar errado)
+        dinfo('GPS impreciso (erro de cerca de ' + fmt(p.coords.accuracy) + '). Ative a localização precisa e vá para um local aberto.');
+        return;
+      }
+      // confere na tela do motorista onde o aparelho acha que está (compare com o Google Maps)
+      $('dst').textContent =
+        'Transmitindo · rota ' + rname(cur.rota) + ' · precisão ±' + Math.round(p.coords.accuracy) + ' m · ' +
+        p.coords.latitude.toFixed(5) + ', ' + p.coords.longitude.toFixed(5);
       cur.last = { lat: p.coords.latitude, lng: p.coords.longitude, vel: p.coords.speed };
       cur.fixAt = Date.now();
       gpsWarn(false);
